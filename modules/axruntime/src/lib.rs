@@ -21,6 +21,9 @@
 
 #[macro_use]
 extern crate axlog;
+extern crate alloc;
+use alloc::vec::Vec;
+use axalloc::GlobalPage;
 
 #[cfg(all(target_os = "none", not(test)))]
 mod lang_items;
@@ -188,7 +191,7 @@ pub extern "C" fn rust_main(cpu_id: usize, dtb: usize) -> ! {
     while !is_init_ok() {
         core::hint::spin_loop();
     }
-
+    run_test();
     unsafe { main() };
 
     #[cfg(feature = "multitask")]
@@ -199,7 +202,55 @@ pub extern "C" fn rust_main(cpu_id: usize, dtb: usize) -> ! {
         axhal::misc::terminate();
     }
 }
+fn run_test() {
+    ax_println!("Start to test MM performance");
+    test_alloc_4k_only(32);
+    test_alloc_4k_only(64);
+    // test_alloc_4k_only(128);
+    // test_alloc_4k_only(256);
+    ax_println!("Test MM performance finished");
+}
+/// 测试分配4K内存的性能(分配16M内存)
+#[cfg_attr(not(test), no_mangle)]
+fn test_alloc_4k_only(megabytes: usize) {
+    ax_println!("Test alloc {} MB", megabytes);
+    let pages_to_alloc = megabytes * 1024 * 1024 / 4096;
+    // 申请一个pages_to_alloc 大小的数组，存放pages_to_alloc
+    // 读取时间
+    let mut start_time = axhal::time::current_time_nanos();
+    let mut data: Vec<GlobalPage>=Vec::new();
+    for _ in 0..pages_to_alloc {
+        let test=axalloc::GlobalPage::alloc();
+        data.push(test.unwrap());
+    }
+    // 计时
+    let mut end_time = axhal::time::current_time_nanos();
+    let mut total_time = (end_time - start_time) as f64;
+    ax_println!(
+        "Test: alloc 4K pages, page num: {}, total time: {}s, average time: {}s, speed: {} frames/sec",
+        pages_to_alloc,
+        total_time,
+        total_time / pages_to_alloc as f64,
+        pages_to_alloc as f64 / total_time
+    );
+    // 释放内存
+    start_time=axhal::time::current_time_nanos();
+    for _ in 0..pages_to_alloc {
+        let test4 = data.pop();
+        drop(test4.unwrap());
+    }
+    end_time=axhal::time::current_time_nanos();
+     total_time = (end_time - start_time) as f64;
+    ax_println!(
+        "Test: drop 4K pages, page num: {}, total time: {}s, average time: {}s, speed: {} frames/sec",
+        pages_to_alloc,
+        total_time,
+        total_time / pages_to_alloc as f64,
+        pages_to_alloc as f64 / total_time
+    );
 
+
+}
 #[cfg(feature = "alloc")]
 fn init_allocator() {
     use axhal::mem::{memory_regions, phys_to_virt, MemRegionFlags};
